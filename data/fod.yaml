@@ -1,0 +1,12 @@
+# YOLOv8 dataset config — matches weights/best.pt class labels
+
+path: ./data/fod-a
+train: images/train
+val: images/val
+
+names:
+  0: Batterytrack_idkeyframe
+  1: FOD
+  2: Hole
+  3: Woodtrack_idkeyframe
+  4: obj
