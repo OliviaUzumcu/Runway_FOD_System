@@ -184,3 +184,37 @@ def summarize_detections(detections: list[dict[str, Any]]) -> dict[str, Any]:
         "total": len(detections),
         "per_class": per_class,
     }
+
+
+def get_fod_alert(detections: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    Build FOD alert status from detection results.
+
+    Matches the trained class label "FOD" (case-insensitive).
+    """
+    fod_items = [
+        det for det in detections if det["class_name"].strip().upper() == "FOD"
+    ]
+
+    if not fod_items:
+        return {
+            "fod_present": False,
+            "fod_count": 0,
+            "max_confidence": 0.0,
+            "message": "No Foreign Object Debris (FOD) detected in this image.",
+        }
+
+    max_conf = max(det["confidence"] for det in fod_items)
+    count = len(fod_items)
+    message = (
+        f"ALERT: Foreign Object Debris (FOD) detected in this image! "
+        f"{count} FOD object{'s' if count != 1 else ''} found "
+        f"(highest confidence: {max_conf * 100:.1f}%)."
+    )
+
+    return {
+        "fod_present": True,
+        "fod_count": count,
+        "max_confidence": max_conf,
+        "message": message,
+    }
