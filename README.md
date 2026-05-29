@@ -26,16 +26,35 @@ The results table shows both **Class** (normalized) and **Raw Model Class** (ori
 
 ```
 grad_project_oli/
-├── app.py              # Streamlit web UI
-├── config.py           # Paths, ensemble config, defaults
-├── utils.py            # Pre-process, dual-model inference, post-process
+├── config.py               # Shared paths, ensemble config, defaults
+├── web/                    # Streamlit UI
+│   ├── app.py              # Entry point: streamlit run web/app.py
+│   ├── cache.py            # Streamlit model caching
+│   ├── pipeline.py         # Upload → api service → session state
+│   ├── state.py            # Session state initialization
+│   └── components/
+│       ├── sidebar.py      # Confidence / IoU / filter controls
+│       ├── alerts.py       # FOD safety alert dialog
+│       └── results.py      # Images, metrics, detection table
+├── api/                    # Framework-agnostic detection logic
+│   ├── schemas.py          # DetectionResult dataclass
+│   ├── models/
+│   │   └── loader.py       # YOLOv8 ensemble loading
+│   ├── services/
+│   │   └── detection.py    # DetectionService entry point
+│   └── processing/
+│       ├── image.py        # Preprocess, letterbox, read_image_bytes
+│       ├── inference.py    # YOLO predict + parse
+│       ├── ensemble.py     # Merge, NMS, class normalization
+│       ├── visualization.py
+│       └── alerts.py       # Summary + safety alert logic
 ├── requirements.txt
 ├── weights/
-│   ├── best.pt         # Primary FOD + obj model
-│   └── best_v2.pt      # Secondary FOD + Animal model
-├── assets/             # Optional sample images
+│   ├── best.pt             # Primary FOD + obj model
+│   └── best_v2.pt          # Secondary FOD + Animal model
+├── assets/                 # Optional sample images
 └── data/
-    └── fod.yaml        # YOLO dataset config template
+    └── fod.yaml            # YOLO dataset config template
 ```
 
 ## Setup
@@ -51,7 +70,8 @@ pip install -r requirements.txt
 
 ```bash
 source .venv/bin/activate
-streamlit run app.py
+streamlit run web/app.py
+# or: streamlit run app.py
 ```
 
 Open the URL shown in the terminal (typically `http://localhost:8501`).
