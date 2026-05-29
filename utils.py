@@ -244,16 +244,17 @@ def run_inference(
     iou: float,
 ) -> Results:
     """
-    Run YOLOv8 detection on the original image.
+    Run YOLOv8 detection on the enhanced input image with Test-Time Augmentation.
 
-    All model classes are evaluated first; priority filtering happens after
-    class-name normalization so Hole and similar labels can be remapped to FOD.
+    TTA (`augment=True`) improves recall/confidence on small or low-contrast FOD.
+    Sidebar `conf` and `iou` thresholds are passed through unchanged.
     """
     results = model.predict(
         source=image,
         conf=conf,
         iou=iou,
         imgsz=IMGSZ,
+        augment=True,
         verbose=False,
     )
     return results[0]
