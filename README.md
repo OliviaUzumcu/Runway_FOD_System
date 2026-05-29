@@ -1,32 +1,41 @@
 # FOD Detection System
 
-Web-based **Foreign Object Debris (FOD) Detection** using **Ultralytics YOLOv8** and **Streamlit**. Upload static images (e.g., airport runways), run inference, and view annotated results with detection counts.
+Web-based **Foreign Object Debris (FOD) Detection** using **Ultralytics YOLOv8** and **Streamlit**. Upload static images (e.g., airport runways), run dual-model inference, and view annotated results with safety alerts.
 
-## Active Model
+## Model Weights (`weights/`)
 
-The app uses your custom weights at **`weights/best.pt`**:
+The app loads **both** checkpoints automatically and merges their results — no model selection needed.
 
-| ID | Class  | Filter UI |
-|----|--------|-----------|
-| 0  | Animal | Yes       |
-| 1  | FOD    | Yes       |
-| 2  | Hole   | No (excluded from Filter Classes) |
+| File | Raw classes | Role |
+|------|-------------|------|
+| **`best.pt`** | Batterytrack_idkeyframe, **FOD**, Hole, Woodtrack_idkeyframe, **obj** | Primary — nails, small debris, general FOD |
+| **`best_v2.pt`** | **Animal**, **FOD**, Hole | Secondary — animal detection on runway |
 
-**Filter Classes** in the sidebar only shows **FOD** and **Animal** by default.
+### Unified output (UI)
+
+All detections are normalized to two priority classes:
+
+| Display class | Source |
+|---------------|--------|
+| **FOD** | Native FOD, **obj**, Hole, Batterytrack, Woodtrack, and all other debris labels |
+| **Animal** | Native Animal (from `best_v2.pt`) |
+
+The results table shows both **Class** (normalized) and **Raw Model Class** (original model label).
 
 ## Project Structure
 
 ```
 grad_project_oli/
 ├── app.py              # Streamlit web UI
-├── config.py           # Paths and inference defaults
-├── utils.py            # Pre-process, inference, post-process
+├── config.py           # Paths, ensemble config, defaults
+├── utils.py            # Pre-process, dual-model inference, post-process
 ├── requirements.txt
 ├── weights/
-│   └── best.pt         # Custom FOD weights (active)
+│   ├── best.pt         # Primary FOD + obj model
+│   └── best_v2.pt      # Secondary FOD + Animal model
 ├── assets/             # Optional sample images
 └── data/
-    └── fod.yaml        # Dataset config matching best.pt classes
+    └── fod.yaml        # YOLO dataset config template
 ```
 
 ## Setup
@@ -50,29 +59,43 @@ Open the URL shown in the terminal (typically `http://localhost:8501`).
 ## Usage
 
 1. Upload a JPG, PNG, BMP, or WEBP image (runway / taxiway photo).
-2. Adjust **Confidence Threshold** and **IoU (NMS)** in the sidebar if needed.
-3. Use **Filter Classes** to detect **FOD**, **Animal**, or both.
+2. Both **`best.pt`** and **`best_v2.pt`** run automatically (dual-model ensemble).
+3. Adjust sidebar settings if needed:
+   - **Confidence Threshold** — default `0.34`
+   - **IoU Threshold (NMS)** — default `0.45`
+   - **Filter Classes** — **FOD** and **Animal** (both selected by default)
 4. Click **Run Detection**.
-5. If FOD is found, a flashing pop-up alert appears.
+5. View original vs annotated image, detection summary, and results table.
 
 ## Alerts
 
-- **FOD detected** → flashing red pop-up warning
-- **No FOD** → green success message
-- **Animal** detections appear in results but do not trigger the FOD runway alert
+A flashing pop-up appears when any of the following are detected:
 
-## Replace the Model
+- **FOD** (includes obj and remapped debris)
+- **Animal**
 
-After retraining, copy new weights:
+If nothing is detected → green success message.
+
+## Replace Weights
+
+After retraining, copy weights into `weights/`:
 
 ```bash
 cp runs/detect/train/weights/best.pt weights/best.pt
+cp runs/detect/train/weights/best.pt weights/best_v2.pt   # if retraining v2
 ```
 
-Restart Streamlit. The app reloads automatically when `best.pt` changes.
+Restart Streamlit. Models reload when file contents change.
 
-Training command:
+Training command (update `data/fod.yaml` paths first):
 
 ```bash
 yolo detect train data=data/fod.yaml model=yolov8n.pt imgsz=640 epochs=100 batch=16
+```
+
+## Workflow
+
+```
+Upload image → best.pt + best_v2.pt inference → Merge & NMS
+→ Normalize (obj → FOD) → Annotated output → Alert if FOD/Animal found
 ```
