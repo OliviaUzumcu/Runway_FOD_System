@@ -16,6 +16,8 @@ from ultralytics.engine.results import Results
 from config import (
     ALERT_CLASS_NAMES,
     CLASS_COLORS,
+    DEFAULT_IOU,
+    ENSEMBLE_MATCH_IOU,
     IMGSZ,
     LETTERBOX_COLOR,
     PRESERVED_CLASS_NAMES,
@@ -179,6 +181,92 @@ def _box_iou(box_a: dict[str, float], box_b: dict[str, float]) -> float:
     return inter_area / union if union > 0 else 0.0
 
 
+def fuse_confidence_scores(confidences: list[float]) -> float:
+    """
+    Boost confidence when multiple models agree (independent-detection formula).
+
+    Single model: returns the original score unchanged.
+    Two models: conf_final = 1 - (1 - conf1) * (1 - conf2)
+    """
+    fused = 0.0
+    for conf in confidences:
+        fused = 1.0 - (1.0 - fused) * (1.0 - conf)
+    return min(fused, 1.0)
+
+
+def _fuse_detection_cluster(cluster: list[dict[str, Any]]) -> dict[str, Any]:
+    """Fuse a cluster of cross-model detections into one weighted box."""
+    confidences = [det["confidence"] for det in cluster]
+    fused_conf = fuse_confidence_scores(confidences)
+    weight_sum = sum(confidences) or 1.0
+
+    fused_box = {
+        axis: sum(det[axis] * det["confidence"] for det in cluster) / weight_sum
+        for axis in ("x1", "y1", "x2", "y2")
+    }
+
+    best_det = max(cluster, key=lambda det: det["confidence"])
+    sources = sorted({det["source_model"] for det in cluster})
+
+    return {
+        "class_name": best_det["class_name"],
+        "original_class": best_det["original_class"],
+        "confidence": fused_conf,
+        **fused_box,
+        "source_model": "+".join(sources),
+        "model_agreement": len(sources),
+    }
+
+
+def merge_ensemble_detections(
+    detections: list[dict[str, Any]],
+    match_iou: float = ENSEMBLE_MATCH_IOU,
+    nms_iou: float = DEFAULT_IOU,
+) -> list[dict[str, Any]]:
+    """
+    IoU-based weighted box fusion for the dual-model ensemble.
+
+    Detections from different checkpoints with the same normalized class and
+    IoU >= match_iou are merged into one box. Agreement boosts confidence via
+    fuse_confidence_scores(); single-model hits keep their original score.
+    """
+    if not detections:
+        return []
+
+    clusters: list[list[dict[str, Any]]] = []
+    assigned = [False] * len(detections)
+    order = sorted(
+        range(len(detections)),
+        key=lambda idx: detections[idx]["confidence"],
+        reverse=True,
+    )
+
+    for idx in order:
+        if assigned[idx]:
+            continue
+
+        seed = detections[idx]
+        cluster = [seed]
+        assigned[idx] = True
+
+        for other_idx in order:
+            if assigned[other_idx]:
+                continue
+            candidate = detections[other_idx]
+            if candidate["class_name"] != seed["class_name"]:
+                continue
+            if any(
+                _box_iou(candidate, member) >= match_iou for member in cluster
+            ):
+                cluster.append(candidate)
+                assigned[other_idx] = True
+
+        clusters.append(cluster)
+
+    fused = [_fuse_detection_cluster(cluster) for cluster in clusters]
+    return nms_detections(fused, nms_iou)
+
+
 def nms_detections(
     detections: list[dict[str, Any]], iou_threshold: float
 ) -> list[dict[str, Any]]:
@@ -318,7 +406,11 @@ def run_ensemble_inference(
         )
 
     normalized = normalize_detections(combined_raw, selected_filters)
-    detections = nms_detections(normalized, iou)
+    detections = merge_ensemble_detections(
+        normalized,
+        match_iou=ENSEMBLE_MATCH_IOU,
+        nms_iou=iou,
+    )
     annotated_bgr = draw_annotated_image(original_bgr, detections)
     return annotated_bgr, detections
 
