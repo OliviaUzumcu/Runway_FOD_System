@@ -27,6 +27,8 @@ ALERT_CLASS_NAMES = {"FOD", "Animal"}
 IMGSZ = 640
 DEFAULT_CONF = 0.34
 DEFAULT_IOU = 0.45
+# Cross-model box matching threshold for ensemble fusion (WBF-style)
+ENSEMBLE_MATCH_IOU = 0.5
 LETTERBOX_COLOR = (114, 114, 114)
 SUPPORTED_FORMATS = ["jpg", "jpeg", "png", "bmp", "webp"]
 
