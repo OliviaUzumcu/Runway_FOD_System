@@ -7,16 +7,20 @@ import traceback
 import pandas as pd
 import streamlit as st
 
-from config import DEFAULT_CONF, DEFAULT_IOU, SUPPORTED_FORMATS
-from config import CUSTOM_MODEL
+from config import (
+    DEFAULT_CONF,
+    DEFAULT_IOU,
+    ENSEMBLE_MODELS,
+    SUPPORTED_FORMATS,
+    get_filter_options,
+)
 from utils import (
+    get_ensemble_cache_key,
     get_fod_alert,
-    get_model_cache_key,
-    load_model,
-    postprocess_results,
+    load_ensemble_models,
     preprocess_image,
     read_uploaded_image,
-    run_inference,
+    run_ensemble_inference,
     summarize_detections,
 )
 
@@ -38,20 +42,15 @@ def init_session_state() -> None:
             st.session_state[key] = value
 
 
-def render_sidebar(model, is_custom: bool) -> tuple[float, float, list[int] | None]:
+def render_sidebar(models: list[tuple[str, object]]) -> tuple[float, float, list[str]]:
     """Render sidebar controls and return inference settings."""
     st.sidebar.title("Settings")
 
-    if is_custom:
-        st.sidebar.success("Custom FOD model loaded")
-        st.sidebar.caption(f"`{CUSTOM_MODEL.name}` — {len(model.names)} classes")
-        with st.sidebar.expander("Model classes"):
-            for class_id, class_name in model.names.items():
-                st.write(f"{class_id}: **{class_name}**")
+    if models:
+        st.sidebar.success("Dual-model ensemble active")
     else:
-        st.sidebar.warning(
-            "Using placeholder model (`yolov8n.pt`). "
-            "Place your trained weights at `weights/best.pt` for FOD-specific detection."
+        st.sidebar.error(
+            f"Missing weights. Add {' and '.join(ENSEMBLE_MODELS)} under `weights/`."
         )
 
     conf = st.sidebar.slider(
@@ -71,51 +70,53 @@ def render_sidebar(model, is_custom: bool) -> tuple[float, float, list[int] | No
         help="Intersection-over-Union threshold for Non-Maximum Suppression.",
     )
 
-    class_names = list(model.names.values())
+    filter_options = get_filter_options()
+
     selected_classes = st.sidebar.multiselect(
         "Filter Classes",
-        options=class_names,
-        default=class_names,
-        help="Limit detections to selected classes.",
+        options=filter_options,
+        default=filter_options,
+        help="FOD includes obj and all other debris classes remapped from the models.",
     )
-    class_filter = [class_names.index(name) for name in selected_classes] or None
+    if not selected_classes:
+        selected_classes = filter_options
 
     st.sidebar.markdown("---")
     st.sidebar.markdown(
-        "**Workflow:** Upload image → Pre-process (640×640) → "
-        "YOLOv8 inference → NMS → Annotated output"
+        "**Workflow:** Upload image → Both models infer → Merge → "
+        "Normalize (FOD / Animal) → Alert"
     )
 
-    return conf, iou, class_filter
+    return conf, iou, selected_classes
 
 
 def run_detection_pipeline(
-    model,
+    models: list[tuple[str, object]],
     uploaded_image,
     conf: float,
     iou: float,
-    class_filter: list[int] | None,
+    selected_filters: list[str],
 ) -> None:
-    """Execute the full detection pipeline and store results in session state."""
+    """Execute the full ensemble detection pipeline."""
+    if not models:
+        st.error("No model weights found in `weights/`.")
+        return
+
     rgb_image = read_uploaded_image(uploaded_image)
     if rgb_image is None:
         return
 
     try:
-        # Step 1: Pre-processing — resize to 640x640 and normalize for preview
         original_bgr, preprocessed_bgr, _ = preprocess_image(rgb_image)
 
-        # Step 2: Inference — pass original image; YOLOv8 handles resize + NMS
-        results = run_inference(
-            model=model,
+        annotated_bgr, detections = run_ensemble_inference(
+            models=models,
             image=original_bgr,
             conf=conf,
             iou=iou,
-            classes=class_filter,
+            selected_filters=selected_filters,
+            original_bgr=original_bgr,
         )
-
-        # Step 3: Post-processing — draw boxes, labels, confidence scores
-        annotated_bgr, detections = postprocess_results(results, model.names)
         summary = summarize_detections(detections)
 
         st.session_state.original_bgr = original_bgr
@@ -134,9 +135,11 @@ def run_detection_pipeline(
 
 
 def show_fod_popup(alert: dict) -> None:
-    """Display a flashing FOD alert pop-up dialog."""
+    """Display a flashing safety alert pop-up dialog."""
     count = alert["fod_count"]
     conf = alert["max_confidence"] * 100
+    title = alert.get("title", "FOD DETECTED")
+    types = ", ".join(alert.get("alert_types", ["FOD"]))
 
     st.markdown(
         f"""
@@ -187,14 +190,14 @@ def show_fod_popup(alert: dict) -> None:
         </style>
         <div class="fod-popup-box">
             <div class="fod-popup-icon">🚨</div>
-            <div class="fod-popup-title">FOD DETECTED</div>
+            <div class="fod-popup-title">{title}</div>
             <p class="fod-popup-text">
-                Foreign Object Debris found in this image!<br>
-                <strong>{count}</strong> FOD object{"s" if count != 1 else ""} detected
-                (highest confidence: <strong>{conf:.1f}%</strong>).
+                Runway safety issue found in this image.<br>
+                <strong>{count}</strong> object{"s" if count != 1 else ""} detected
+                ({types}; highest confidence: <strong>{conf:.1f}%</strong>).
             </p>
             <p class="fod-popup-text" style="margin-top:6px; font-size:11px; opacity:0.9;">
-                Inspect and remove debris before operations.
+                Inspect the marked region(s) before operations.
             </p>
         </div>
         """,
@@ -206,7 +209,7 @@ def show_fod_popup(alert: dict) -> None:
         st.rerun()
 
 
-@st.dialog("⚠️ FOD Alert", width="small")
+@st.dialog("⚠️ Runway Safety Alert", width="small")
 def open_fod_alert_dialog(alert: dict) -> None:
     show_fod_popup(alert)
 
@@ -259,7 +262,7 @@ def render_results() -> None:
     st.subheader("Detection Summary")
 
     metric_cols = st.columns(min(len(summary["per_class"]) + 1, 4))
-    metric_cols[0].metric("Total FOD Detected", summary["total"])
+    metric_cols[0].metric("Total Detected", summary["total"])
 
     for idx, (class_name, count) in enumerate(summary["per_class"].items()):
         if idx + 1 < len(metric_cols):
@@ -277,19 +280,31 @@ def render_results() -> None:
     if st.session_state.detections:
         df = pd.DataFrame(st.session_state.detections)
         df["confidence"] = (df["confidence"] * 100).round(1).astype(str) + "%"
-        df = df.rename(
-            columns={
-                "class_name": "Class",
-                "confidence": "Confidence",
-                "x1": "X1",
-                "y1": "Y1",
-                "x2": "X2",
-                "y2": "Y2",
-            }
-        )
+        rename_map = {
+            "class_name": "Class",
+            "original_class": "Raw Model Class",
+            "source_model": "Source Model",
+            "confidence": "Confidence",
+            "x1": "X1",
+            "y1": "Y1",
+            "x2": "X2",
+            "y2": "Y2",
+        }
+        df = df.rename(columns=rename_map)
+        display_cols = [
+            "Class",
+            "Raw Model Class",
+            "Source Model",
+            "Confidence",
+            "X1",
+            "Y1",
+            "X2",
+            "Y2",
+        ]
+        df = df[[c for c in display_cols if c in df.columns]]
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
-        st.info("No foreign object debris detected at the current threshold settings.")
+        st.info("No FOD or Animal detected at the current threshold settings.")
 
 
 def main() -> None:
@@ -302,14 +317,14 @@ def main() -> None:
 
     st.title("FOD Detection System")
     st.markdown(
-        "Upload a static image (e.g., airport runway) to detect **Foreign Object Debris** "
-        "using **Ultralytics YOLOv8**."
+        "Upload a static image (e.g., airport runway). **Both** trained models "
+        "(`best.pt` + `best_v2.pt`) run automatically to detect **FOD** and **Animal**."
     )
 
     init_session_state()
 
-    model, is_custom = load_model(get_model_cache_key())
-    conf, iou, class_filter = render_sidebar(model, is_custom)
+    models = load_ensemble_models(get_ensemble_cache_key())
+    conf, iou, selected_filters = render_sidebar(models)
 
     uploaded_file = st.file_uploader(
         "Upload Image",
@@ -320,8 +335,8 @@ def main() -> None:
     run_clicked = st.button("Run Detection", type="primary", use_container_width=False)
 
     if uploaded_file is not None and run_clicked:
-        with st.spinner("Running FOD detection..."):
-            run_detection_pipeline(model, uploaded_file, conf, iou, class_filter)
+        with st.spinner("Running dual-model FOD detection..."):
+            run_detection_pipeline(models, uploaded_file, conf, iou, selected_filters)
 
     render_results()
 

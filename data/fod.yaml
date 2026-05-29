@@ -1,5 +1,4 @@
-# YOLOv8 dataset config — matches weights/best.pt class labels
-
+# Primary model — weights/best.pt
 path: ./data/fod-a
 train: images/train
 val: images/val
@@ -10,3 +9,5 @@ names:
   2: Hole
   3: Woodtrack_idkeyframe
   4: obj
+
+# obj (and Hole, etc.) are remapped to FOD in the app UI

@@ -4,15 +4,15 @@ Web-based **Foreign Object Debris (FOD) Detection** using **Ultralytics YOLOv8**
 
 ## Active Model
 
-The app uses your custom weights at **`weights/best.pt`** with these classes:
+The app uses your custom weights at **`weights/best.pt`**:
 
-| ID | Class |
-|----|-------|
-| 0 | Batterytrack_idkeyframe |
-| 1 | FOD |
-| 2 | Hole |
-| 3 | Woodtrack_idkeyframe |
-| 4 | obj |
+| ID | Class  | Filter UI |
+|----|--------|-----------|
+| 0  | Animal | Yes       |
+| 1  | FOD    | Yes       |
+| 2  | Hole   | No (excluded from Filter Classes) |
+
+**Filter Classes** in the sidebar only shows **FOD** and **Animal** by default.
 
 ## Project Structure
 
@@ -23,8 +23,7 @@ grad_project_oli/
 ├── utils.py            # Pre-process, inference, post-process
 ├── requirements.txt
 ├── weights/
-│   ├── best.pt         # Custom FOD weights (active)
-│   └── yolov8n.pt      # Fallback placeholder
+│   └── best.pt         # Custom FOD weights (active)
 ├── assets/             # Optional sample images
 └── data/
     └── fod.yaml        # Dataset config matching best.pt classes
@@ -52,29 +51,19 @@ Open the URL shown in the terminal (typically `http://localhost:8501`).
 
 1. Upload a JPG, PNG, BMP, or WEBP image (runway / taxiway photo).
 2. Adjust **Confidence Threshold** and **IoU (NMS)** in the sidebar if needed.
-3. Optionally filter by class (FOD, Hole, obj, etc.).
+3. Use **Filter Classes** to detect **FOD**, **Animal**, or both.
 4. Click **Run Detection**.
-5. View the original image, annotated result, detection counts, and bounding-box table.
+5. If FOD is found, a flashing pop-up alert appears.
 
-## Workflow
+## Alerts
 
-1. **Upload** — Select a static image.
-2. **Pre-process** — Letterbox resize to 640×640 (preview in expander).
-3. **Inference** — YOLOv8 runs on `weights/best.pt` with NMS.
-4. **Post-process** — Bounding boxes, labels, and confidence scores drawn on output.
-5. **Results** — Metrics and per-detection table in the UI.
+- **FOD detected** → flashing red pop-up warning
+- **No FOD** → green success message
+- **Animal** detections appear in results but do not trigger the FOD runway alert
 
-## Sidebar Settings
+## Replace the Model
 
-| Setting | Description |
-|---------|-------------|
-| Confidence Threshold | Minimum score to keep a detection (default 0.25) |
-| IoU Threshold (NMS) | Overlap threshold for Non-Maximum Suppression (default 0.45) |
-| Filter Classes | Limit output to selected classes from your model |
-
-## Replace or Retrain the Model
-
-To update weights after retraining:
+After retraining, copy new weights:
 
 ```bash
 cp runs/detect/train/weights/best.pt weights/best.pt
@@ -82,14 +71,8 @@ cp runs/detect/train/weights/best.pt weights/best.pt
 
 Restart Streamlit. The app reloads automatically when `best.pt` changes.
 
-Training command (update `data/fod.yaml` paths first):
+Training command:
 
 ```bash
 yolo detect train data=data/fod.yaml model=yolov8n.pt imgsz=640 epochs=100 batch=16
 ```
-
-## YOLOv8 API
-
-- `YOLO("weights/best.pt")` — load custom weights
-- `model.predict(conf=..., iou=..., imgsz=640)` — inference with built-in NMS
-- `model.names` — class labels from the trained checkpoint
